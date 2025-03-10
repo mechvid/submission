@@ -1,0 +1,267 @@
+Detailed Implementation Steps
+Step 1: Backend Data Service and API Endpoint Implementation
+First, we need to create a new module in the NestJS backend to handle the roster functionality:
+
+typescript
+// roster.module.ts
+import { Module } from '@nestjs/common';
+import { RosterController } from './roster.controller';
+import { RosterService } from './roster.service';
+
+@Module({
+  controllers: [RosterController],
+  providers: [RosterService],
+})
+export class RosterModule {}
+Next, implement the service that will aggregate user statistics:
+
+typescript
+// roster.service.ts
+import { Injectable } from '@nestjs/common';
+import { User } from '../user/user.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Article } from '../article/article.entity';
+
+@Injectable()
+export class RosterService {
+  constructor(
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(Article)
+    private articleRepository: Repository<Article>,
+  ) {}
+
+  async getUsersWithStats() {
+    // Query to get all users with their article counts, favorite counts, and first article date
+    const users = await this.userRepository
+      .createQueryBuilder('user')
+      .select('user.id', 'id')
+      .addSelect('user.username', 'username')
+      .addSelect('user.bio', 'bio')
+      .addSelect('user.image', 'image')
+      .leftJoin('user.articles', 'article')
+      .addSelect('COUNT(DISTINCT article.id)', 'articleCount')
+      .addSelect(
+        'SUM(CASE WHEN favorite.id IS NOT NULL THEN 1 ELSE 0 END)',
+        'favoriteCount',
+      )
+      .addSelect('MIN(article.createdAt)', 'firstArticleDate')
+      .leftJoin('article.favorites', 'favorite')
+      .groupBy('user.id')
+      .getRawMany();
+
+    return users;
+  }
+}
+Then, create a controller to expose the endpoint:
+
+typescript
+// roster.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { RosterService } from './roster.service';
+
+@Controller('roster')
+export class RosterController {
+  constructor(private readonly rosterService: RosterService) {}
+
+  @Get()
+  async getRoster() {
+    return await this.rosterService.getUsersWithStats();
+  }
+}
+Finally, update the app module to include the new roster module:
+
+typescript
+// app.module.ts
+import { Module } from '@nestjs/common';
+import { RosterModule } from './roster/roster.module';
+// other imports...
+
+@Module({
+  imports: [
+    // other modules...
+    RosterModule,
+  ],
+})
+export class AppModule {}
+Step 2: Frontend Component Development
+For the frontend, we need to create a component to display the roster data:
+
+typescript
+// roster.component.ts
+import { Component, OnInit } from '@angular/core';
+import { RosterService } from '../services/roster.service';
+
+interface UserStats {
+  id: number;
+  username: string;
+  bio: string;
+  image: string;
+  articleCount: number;
+  favoriteCount: number;
+  firstArticleDate: string;
+}
+
+@Component({
+  selector: 'app-roster',
+  templateUrl: './roster.component.html',
+  styleUrls: ['./roster.component.css']
+})
+export class RosterComponent implements OnInit {
+  users: UserStats[] = [];
+  isLoading = false;
+
+  constructor(private rosterService: RosterService) {}
+
+  ngOnInit() {
+    this.loadRosterData();
+  }
+
+  loadRosterData() {
+    this.isLoading = true;
+    this.rosterService.getRoster().subscribe(
+      (data) => {
+        this.users = data;
+        this.isLoading = false;
+      },
+      (error) => {
+        console.error('Error loading roster data', error);
+        this.isLoading = false;
+      }
+    );
+  }
+}
+Create the corresponding service to fetch data from the backend:
+
+typescript
+// roster.service.ts
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { ApiService } from './api.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class RosterService {
+  constructor(private apiService: ApiService) {}
+
+  getRoster(): Observable<any> {
+    return this.apiService.get('/roster');
+  }
+}
+Create the roster component template:
+
+xml
+<!-- roster.component.html -->
+<div class="container">
+  <h1>Conduit Roster</h1>
+  
+  <div class="roster-container" *ngIf="!isLoading">
+    <table class="roster-table">
+      <thead>
+        <tr>
+          <th>Author</th>
+          <th>Articles</th>
+          <th>Favorites</th>
+          <th>First Article</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let user of users">
+          <td>
+            <a [routerLink]="['/profile', user.username]">
+              <img [src]="user.image || 'assets/default-avatar.png'" alt="{{ user.username }}" class="author-image">
+              {{ user.username }}
+            </a>
+          </td>
+          <td>{{ user.articleCount || 0 }}</td>
+          <td>{{ user.favoriteCount || 0 }}</td>
+          <td>{{ user.firstArticleDate | date:'mediumDate' || '-' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="loading" *ngIf="isLoading">
+    Loading roster data...
+  </div>
+</div>
+Add some basic styling:
+
+css
+/* roster.component.css */
+.container {
+  margin: 1.5rem auto;
+  max-width: 1200px;
+  padding: 0 15px;
+}
+
+h1 {
+  font-weight: 500;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.roster-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.roster-table th, .roster-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.roster-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+.author-image {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: #6c757d;
+}
+Update the module file to include the new component:
+
+typescript
+// roster.module.ts
+import { NgModule } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { RouterModule } from '@angular/router';
+import { RosterComponent } from './roster.component';
+
+@NgModule({
+  declarations: [RosterComponent],
+  imports: [
+    CommonModule,
+    RouterModule.forChild([
+      {
+        path: '',
+        component: RosterComponent
+      }
+    ])
+  ]
+})
+export class RosterModule {}
+Testing and Validation
+To verify that the implementation meets the acceptance criteria, we should test the following scenarios:
+
+Navigate to the Roster page as a logged-in user to confirm all users are displayed with their statistics.
+
+Create a new article and verify that the article count for the author increases in the roster list.
+
+Add favorites to an article and check that the favorites count updates correctly.
+
+These tests will ensure that the feature works as expected and satisfies the requirements specified in the assessment.
